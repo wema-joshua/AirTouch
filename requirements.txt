@@ -1,0 +1,13 @@
+# AirTouch V1 dependencies
+# Python 3.11+ required.
+#
+# mediapipe: as of writing, mediapipe's published wheels lag behind the
+# newest CPython releases and top out around Python 3.11-3.12 support
+# depending on platform. Pin to a recent stable 0.10.x release rather
+# than "latest" so hand-tracking behavior doesn't shift under you.
+opencv-python>=4.9,<5
+mediapipe>=0.10.14,<0.11
+numpy>=1.26,<2
+pyautogui>=0.9.54,<1
+PyYAML>=6.0,<7
+pytest>=8.0,<9

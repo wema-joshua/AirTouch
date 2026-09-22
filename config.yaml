@@ -1,0 +1,52 @@
+# AirTouch V1 configuration
+# All thresholds and tunables live here so behavior can be adjusted
+# without touching code.
+
+camera:
+  device: 0
+  width: 1280
+  height: 720
+  fps: 30
+  mirrored: true
+
+tracking:
+  min_detection_confidence: 0.7
+  min_tracking_confidence: 0.7
+  max_num_hands: 1
+
+cursor:
+  smoothing: 0.65        # 0..1, higher = smoother/slower to react
+  sensitivity: 1.0        # multiplier applied to normalized movement
+  deadzone: 0.02           # minimum normalized movement to react to
+  landmark: 8               # index fingertip landmark id
+
+pinch:
+  threshold: 0.05          # normalized thumb-index distance to count as pinched
+  release_threshold: 0.07  # hysteresis: distance to count as released (must be >= threshold)
+  hold_time: 0.25          # seconds pinched before entering PINCH_HOLD (drag)
+
+scroll:
+  sensitivity: 2.0
+  deadzone: 0.02
+  invert: false             # if true, flips scroll direction
+
+swipe:
+  min_distance: 0.15
+  max_duration: 0.6
+  min_velocity: 0.4         # normalized units / second
+  cooldown: 0.5
+  landmark: 0                # wrist landmark id, used for swipe tracking
+
+gesture:
+  min_confidence: 0.6
+  static_hold_frames: 3      # frames a static gesture must persist to be reported as STARTED
+
+debug:
+  enabled: true
+  show_landmarks: true
+  show_fps: true
+  log_level: INFO
+
+safety:
+  quit_keys: ["q", "Q"]
+  # ESC is always treated as an emergency stop in addition to quit_keys
