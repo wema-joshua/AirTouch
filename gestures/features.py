@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import time
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -230,3 +231,151 @@ def _vector_angle_deg(a: tuple[float, float], b: tuple[float, float]) -> float:
 
     dx, dy = b[0] - a[0], b[1] - a[1]
     return math.degrees(math.atan2(dy, dx))
+
+
+# --- Two-hand features ---------------------------------------------------
+
+
+@dataclass(frozen=True)
+class TwoHandFeatures:
+    """Relationship between two hands visible in the same frame.
+
+    ``left`` / ``right`` refer to image position (leftmost hand in the
+    frame is ``left``), not MediaPipe's handedness label, which can be
+    unreliable or mirrored depending on camera flipping.
+
+    ``*_delta`` fields are changes since the previous frame in which
+    both hands were visible (0 on the first frame, so a zoom or rotate
+    never jumps when the second hand appears).
+    """
+
+    timestamp: float
+    left: HandFeatures
+    right: HandFeatures
+
+    # Palm-center to palm-center distance, divided by the mean hand_span of
+    # both hands so it stays comparable at different distances from the camera.
+    hand_distance: float
+    distance_delta: float  # change in hand_distance since last frame (zoom)
+    distance_rate: float  # hand_distance change per second
+
+    # Midpoint between the two palm centers (normalized image units).
+    midpoint: tuple[float, float]
+    midpoint_delta: tuple[float, float]  # frame-to-frame change (pan)
+
+    # Angle of the left->right palm vector, 0 = level, in degrees.
+    angle_deg: float
+    angle_delta_deg: float  # wrapped to [-180, 180] (twist / roll)
+
+
+@dataclass(frozen=True)
+class MultiHandFeatures:
+    """Everything extracted from one frame, for 0, 1 or 2 hands."""
+
+    timestamp: float
+    hands: dict[str, HandFeatures]  # keyed by "left" / "right" (image position)
+    pair: TwoHandFeatures | None  # only set when exactly two hands are visible
+
+
+class MultiHandFeatureExtractor:
+    """Runs one ``FeatureExtractor`` per hand and, when two hands are
+    visible, derives the relationship features between them.
+
+    Each hand gets its own ``FeatureExtractor`` because that class keeps a
+    per-hand motion history; sharing one would corrupt velocity values.
+    Whenever the number of visible hands changes, all histories are reset
+    so slot reassignment can't produce a velocity or delta spike.
+    """
+
+    def __init__(self) -> None:
+        self._extractors: dict[str, FeatureExtractor] = {
+            "left": FeatureExtractor(),
+            "right": FeatureExtractor(),
+        }
+        self._last_count = 0
+        # (distance, midpoint, angle_deg, timestamp) from the previous pair frame.
+        self._prev_pair: tuple[float, tuple[float, float], float, float] | None = None
+
+    def reset(self) -> None:
+        for extractor in self._extractors.values():
+            extractor.reset()
+        self._prev_pair = None
+
+    def extract(
+        self, hands: Sequence[Hand], timestamp: float | None = None
+    ) -> MultiHandFeatures:
+        ts = timestamp if timestamp is not None else time.monotonic()
+        hands = list(hands)[:2]
+
+        if len(hands) != self._last_count:
+            self.reset()
+            self._last_count = len(hands)
+
+        if not hands:
+            return MultiHandFeatures(timestamp=ts, hands={}, pair=None)
+
+        if len(hands) == 2:
+            ordered = sorted(hands, key=_wrist_x)
+            slots = ("left", "right")
+        else:
+            label = hands[0].handedness.lower()
+            slots = (label if label in self._extractors else "right",)
+            ordered = hands
+
+        per_hand = {
+            slot: self._extractors[slot].extract(hand, ts)
+            for slot, hand in zip(slots, ordered)
+        }
+
+        pair = self._compute_pair(per_hand, ts) if len(per_hand) == 2 else None
+        return MultiHandFeatures(timestamp=ts, hands=per_hand, pair=pair)
+
+    def _compute_pair(
+        self, per_hand: dict[str, HandFeatures], ts: float
+    ) -> TwoHandFeatures:
+        left, right = per_hand["left"], per_hand["right"]
+
+        mean_span = max((left.hand_span + right.hand_span) / 2.0, 1e-6)
+        hand_distance = distance(left.palm_center, right.palm_center) / mean_span
+        mid = (
+            (left.palm_center[0] + right.palm_center[0]) / 2.0,
+            (left.palm_center[1] + right.palm_center[1]) / 2.0,
+        )
+        angle = _vector_angle_deg(left.palm_center, right.palm_center)
+
+        distance_delta = 0.0
+        distance_rate = 0.0
+        midpoint_delta = (0.0, 0.0)
+        angle_delta = 0.0
+
+        if self._prev_pair is not None:
+            prev_dist, prev_mid, prev_angle, prev_ts = self._prev_pair
+            dt = max(ts - prev_ts, 1e-6)
+            distance_delta = hand_distance - prev_dist
+            distance_rate = distance_delta / dt
+            midpoint_delta = (mid[0] - prev_mid[0], mid[1] - prev_mid[1])
+            angle_delta = _wrap_deg(angle - prev_angle)
+
+        self._prev_pair = (hand_distance, mid, angle, ts)
+
+        return TwoHandFeatures(
+            timestamp=ts,
+            left=left,
+            right=right,
+            hand_distance=hand_distance,
+            distance_delta=distance_delta,
+            distance_rate=distance_rate,
+            midpoint=mid,
+            midpoint_delta=midpoint_delta,
+            angle_deg=angle,
+            angle_delta_deg=angle_delta,
+        )
+
+
+def _wrist_x(hand: Hand) -> float:
+    return hand.landmarks[Landmark.WRIST].as_tuple()[0]
+
+
+def _wrap_deg(angle: float) -> float:
+    """Wrap an angle difference into [-180, 180]."""
+    return (angle + 180.0) % 360.0 - 180.0

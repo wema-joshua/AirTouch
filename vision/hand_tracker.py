@@ -131,6 +131,8 @@ class HandTracker:
         self.close()
 
     @property
-    def connections(self):
-        """Expose MediaPipe's hand connection topology for drawing skeletons."""
-        return mp.tasks.vision.HandLandmarksConnections.HAND_CONNECTIONS
+    def connections(self) -> list[tuple[int, int]]:
+        return [
+            (c.start, c.end)
+            for c in mp.tasks.vision.HandLandmarksConnections.HAND_CONNECTIONS
+        ]

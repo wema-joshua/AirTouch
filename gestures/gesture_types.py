@@ -23,6 +23,7 @@ class GestureName(str, Enum):
     SWIPE_RIGHT = "SWIPE_RIGHT"
     SWIPE_UP = "SWIPE_UP"
     SWIPE_DOWN = "SWIPE_DOWN"
+    TWO_HAND_PINCH = "TWO_HAND_PINCH"
 
 
 class LifecycleState(str, Enum):
@@ -42,6 +43,17 @@ class InteractionMode(str, Enum):
     STOPPING = "STOPPING"
 
 
+class ControlMode(str, Enum):
+    """Which mapping set is live: classic mouse control or 3D design control.
+
+    Separate from InteractionMode, which only says whether AirTouch is
+    running, paused or stopping.
+    """
+
+    MOUSE = "MOUSE"
+    DESIGN_3D = "DESIGN_3D"
+
+
 @dataclass(frozen=True)
 class GestureResult:
     """Output of the recognizer for a single frame: "what does this frame
@@ -54,6 +66,13 @@ class GestureResult:
     velocity: tuple[float, float] = (0.0, 0.0)
     thumb_index_distance: float = 0.0
     timestamp: float = 0.0
+    # Frame-to-frame change of the (smoothed) hand position, normalized
+    # image units. Drives orbit / pan; (0, 0) when not available.
+    delta: tuple[float, float] = (0.0, 0.0)
+    # Two-hand values, only meaningful for TWO_HAND_PINCH.
+    pair_distance_delta: float = 0.0
+    pair_midpoint_delta: tuple[float, float] = (0.0, 0.0)
+    pair_angle_delta_deg: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -68,3 +87,10 @@ class GestureEvent:
     index_tip: tuple[float, float] = (0.0, 0.0)
     velocity: tuple[float, float] = (0.0, 0.0)
     timestamp: float = 0.0
+    # Frame-to-frame change of the (smoothed) hand position, normalized
+    # image units. Drives orbit / pan; (0, 0) when not available.
+    delta: tuple[float, float] = (0.0, 0.0)
+    # Two-hand values, only meaningful for TWO_HAND_PINCH.
+    pair_distance_delta: float = 0.0
+    pair_midpoint_delta: tuple[float, float] = (0.0, 0.0)
+    pair_angle_delta_deg: float = 0.0

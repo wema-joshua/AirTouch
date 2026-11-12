@@ -8,10 +8,12 @@ changes here.
 
 from __future__ import annotations
 
+import math
 from collections import deque
 from dataclasses import dataclass
 
 from gestures.gesture_types import GestureName
+from utils.smoothing import OneEuroFilter
 
 
 @dataclass(frozen=True)
@@ -91,3 +93,96 @@ class SwipeDetector:
     def _trim(self, now: float) -> None:
         while self._buffer and (now - self._buffer[0].timestamp) > self.max_duration:
             self._buffer.popleft()
+
+
+# --- Continuous-motion deltas (orbit / pan / zoom) ------------------------
+
+
+class DeltaTracker:
+    """Turns a stream of 2D positions into smoothed frame-to-frame deltas.
+
+    Use one tracker per controlled quantity (e.g. one for the orbit hand,
+    one for the two-hand midpoint). Call ``reset`` whenever the clutch
+    releases or the hand is lost, so the first frame after re-engaging
+    returns (0, 0) instead of a jump from the old position.
+
+    ``deadzone`` is in normalized image units. Movement smaller than this
+    is withheld, not discarded: the reference point stays put until the
+    accumulated displacement exceeds the deadzone, so slow deliberate
+    motion still gets through.
+    """
+
+    def __init__(
+        self,
+        smooth: bool = True,
+        min_cutoff: float = 1.5,
+        beta: float = 8.0,
+        deadzone: float = 0.0,
+    ) -> None:
+        self._filter_x = OneEuroFilter(min_cutoff, beta) if smooth else None
+        self._filter_y = OneEuroFilter(min_cutoff, beta) if smooth else None
+        self.deadzone = deadzone
+        self._ref: tuple[float, float] | None = None
+
+    def reset(self) -> None:
+        if self._filter_x is not None:
+            self._filter_x.reset()
+        if self._filter_y is not None:
+            self._filter_y.reset()
+        self._ref = None
+
+    def update(
+        self, timestamp: float, position: tuple[float, float]
+    ) -> tuple[float, float]:
+        x, y = position
+        if self._filter_x is not None and self._filter_y is not None:
+            x = self._filter_x(timestamp, x)
+            y = self._filter_y(timestamp, y)
+
+        if self._ref is None:
+            self._ref = (x, y)
+            return (0.0, 0.0)
+
+        dx = x - self._ref[0]
+        dy = y - self._ref[1]
+        if self.deadzone > 0.0 and math.hypot(dx, dy) < self.deadzone:
+            return (0.0, 0.0)
+
+        self._ref = (x, y)
+        return (dx, dy)
+
+
+class ScalarDeltaTracker:
+    """Same as ``DeltaTracker`` for a single value, e.g. the normalized
+    distance between two hands (two-hand zoom)."""
+
+    def __init__(
+        self,
+        smooth: bool = True,
+        min_cutoff: float = 1.5,
+        beta: float = 8.0,
+        deadzone: float = 0.0,
+    ) -> None:
+        self._filter = OneEuroFilter(min_cutoff, beta) if smooth else None
+        self.deadzone = deadzone
+        self._ref: float | None = None
+
+    def reset(self) -> None:
+        if self._filter is not None:
+            self._filter.reset()
+        self._ref = None
+
+    def update(self, timestamp: float, value: float) -> float:
+        if self._filter is not None:
+            value = self._filter(timestamp, value)
+
+        if self._ref is None:
+            self._ref = value
+            return 0.0
+
+        delta = value - self._ref
+        if self.deadzone > 0.0 and abs(delta) < self.deadzone:
+            return 0.0
+
+        self._ref = value
+        return delta

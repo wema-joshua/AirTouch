@@ -154,4 +154,8 @@ class GestureStateMachine:
             index_tip=result.index_tip,
             velocity=result.velocity,
             timestamp=result.timestamp,
+            delta=result.delta,
+            pair_distance_delta=result.pair_distance_delta,
+            pair_midpoint_delta=result.pair_midpoint_delta,
+            pair_angle_delta_deg=result.pair_angle_delta_deg,
         )

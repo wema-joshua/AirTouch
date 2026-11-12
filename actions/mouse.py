@@ -47,6 +47,18 @@ class PointerController(ABC):
     def screen_size(self) -> tuple[int, int]:
         ...
 
+    @abstractmethod
+    def press_button(self, button: str) -> None:
+        """Press and hold 'left' | 'middle' | 'right'."""
+
+    @abstractmethod
+    def release_button(self, button: str) -> None:
+        """Release 'left' | 'middle' | 'right'."""
+
+    @abstractmethod
+    def move_relative(self, dx: int, dy: int) -> None:
+        """Move the cursor by a pixel delta (used for orbit/pan)."""
+
 
 class PyAutoGUIPointerController(PointerController):
     """Windows/cross-platform pointer control via PyAutoGUI."""
@@ -58,6 +70,7 @@ class PyAutoGUIPointerController(PointerController):
         pyautogui.PAUSE = 0
         self._pyautogui = pyautogui
         self._dragging = False
+        self._held: set[str] = set()
 
     def move(self, x: float, y: float) -> None:
         try:
@@ -102,6 +115,29 @@ class PyAutoGUIPointerController(PointerController):
         size = self._pyautogui.size()
         return (size.width, size.height)
 
+    def press_button(self, button: str) -> None:
+        try:
+            self._pyautogui.mouseDown(button=button)
+            self._held.add(button)
+        except Exception:
+            logger.exception("Mouse down (%s) failed", button)
+
+    def release_button(self, button: str) -> None:
+        try:
+            if button in self._held:
+                self._pyautogui.mouseUp(button=button)
+                self._held.discard(button)
+        except Exception:
+            logger.exception("Mouse up (%s) failed", button)
+
+    def move_relative(self, dx: int, dy: int) -> None:
+        if dx == 0 and dy == 0:
+            return
+        try:
+            self._pyautogui.moveRel(dx, dy, _pause=False)
+        except Exception:
+            logger.exception("Relative move failed")
+
     @property
     def is_dragging(self) -> bool:
         return self._dragging
@@ -135,6 +171,15 @@ class NullPointerController(PointerController):
 
     def screen_size(self) -> tuple[int, int]:
         return (self._screen_w, self._screen_h)
+
+    def press_button(self, button: str) -> None:
+        self.calls.append(("press_button", (button,)))
+
+    def release_button(self, button: str) -> None:
+        self.calls.append(("release_button", (button,)))
+
+    def move_relative(self, dx: int, dy: int) -> None:
+        self.calls.append(("move_relative", (dx, dy)))
 
 
 # --- Actions -----------------------------------------------------------
@@ -200,3 +245,57 @@ class Scroll(Action):
         amount = int(context.extra.get("scroll_amount", 0))
         if amount != 0:
             self._controller.scroll(amount)
+
+
+# --- 3D actions --------------------------------------------------------
+
+
+class StartOrbit(Action):
+    name = "START_ORBIT"
+
+    def __init__(self, controller: PointerController) -> None:
+        self._controller = controller
+
+    def execute(self, context: ActionContext) -> None:
+        self._controller.press_button("middle")
+
+
+class OrbitMove(Action):
+    name = "ORBIT_MOVE"
+    SENSITIVITY = 1200  # pixels per full-frame hand travel; tune this
+
+    def __init__(self, controller: PointerController) -> None:
+        self._controller = controller
+
+    def execute(self, context: ActionContext) -> None:
+        dx = context.extra.get("dx", 0.0) * self.SENSITIVITY
+        dy = context.extra.get("dy", 0.0) * self.SENSITIVITY
+        self._controller.move_relative(int(dx), int(dy))
+
+
+class EndOrbit(Action):
+    name = "END_ORBIT"
+
+    def __init__(self, controller: PointerController) -> None:
+        self._controller = controller
+
+    def execute(self, context: ActionContext) -> None:
+        self._controller.release_button("middle")
+
+
+class Zoom(Action):
+    name = "ZOOM"
+    SENSITIVITY = 6.0  # scroll notches per unit of normalized hand-distance change; tune this
+
+    def __init__(self, controller: PointerController) -> None:
+        self._controller = controller
+        self._remainder = 0.0
+
+    def execute(self, context: ActionContext) -> None:
+        # Hands apart (positive delta) scrolls up, which zooms in for Blender.
+        # Fractional notches accumulate so slow movement still zooms.
+        self._remainder += context.extra.get("zoom_delta", 0.0) * self.SENSITIVITY
+        notches = int(self._remainder)
+        if notches != 0:
+            self._remainder -= notches
+            self._controller.scroll(notches)
